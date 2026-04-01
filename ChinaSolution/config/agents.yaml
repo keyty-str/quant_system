@@ -1,0 +1,98 @@
+# 三审六司 Agent配置
+
+# 三审Agent配置
+zhongshu_agent:
+  name: "中书Agent"
+  role: "需求规划者"
+  description: "负责需求分析、任务分解、方案生成"
+  capabilities:
+    - requirement_analysis
+    - task_decomposition
+    - dependency_mapping
+    - risk_assessment
+    - plan_generation
+  max_retries: 3
+  timeout: 60
+
+menxia_agent:
+  name: "门下Agent"
+  role: "质量守门员"
+  description: "负责方案审查、合规检查、风险把控"
+  capabilities:
+    - security_check
+    - compliance_validation
+    - feasibility_analysis
+    - ethics_review
+  veto_power: true
+  review_criteria:
+    - security
+    - compliance
+    - feasibility
+    - ethics
+
+shangshu_agent:
+  name: "尚书Agent"
+  role: "执行总监"
+  description: "负责任务分发、进度监控、结果汇总"
+  capabilities:
+    - task_distribution
+    - progress_monitoring
+    - resource_coordination
+    - result_aggregation
+  parallel_execution: true
+
+# 六司Agent配置
+six_departments:
+  personnel:
+    name: "吏部Agent"
+    role: "人员管理"
+    capabilities:
+      - user_authentication
+      - role_assignment
+      - permission_control
+      - team_formation
+
+  resource:
+    name: "户部Agent"
+    role: "资源调度"
+    capabilities:
+      - memory_management
+      - token_budgeting
+      - cost_estimation
+      - resource_allocation
+
+  communication:
+    name: "礼部Agent"
+    role: "对外通信"
+    capabilities:
+      - api_calling
+      - message_formatting
+      - protocol_conversion
+      - external_integration
+
+  security:
+    name: "兵部Agent"
+    role: "安全防护"
+    capabilities:
+      - intrusion_detection
+      - data_encryption
+      - access_control
+      - threat_prevention
+
+  audit:
+    name: "刑部Agent"
+    role: "审计监察"
+    capabilities:
+      - log_auditing
+      - exception_handling
+      - compliance_checking
+      - incident_reporting
+
+  engineering:
+    name: "工部Agent"
+    role: "构建工程"
+    capabilities:
+      - code_generation
+      - test_execution
+      - deployment_management
+      - artifact_creation

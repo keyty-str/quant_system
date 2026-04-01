@@ -1,0 +1,146 @@
+"""
+数据管理路由
+"""
+
+from fastapi import APIRouter, HTTPException, Query
+from typing import List, Optional
+from datetime import datetime, timedelta
+from loguru import logger
+
+router = APIRouter()
+
+
+@router.get("/stocks")
+async def get_stock_list(
+    market: Optional[str] = Query(None, description="市场类型: sh/sz"),
+    page: int = Query(1, description="页码"),
+    page_size: int = Query(50, description="每页数量")
+):
+    """获取股票列表"""
+    # 这里应该从数据库查询股票列表
+    return {
+        "data": [],
+        "total": 0,
+        "page": page,
+        "page_size": page_size
+    }
+
+
+@router.get("/stock/{code}")
+async def get_stock_info(code: str):
+    """获取股票基本信息"""
+    # 这里应该从数据库查询股票信息
+    return {
+        "code": code,
+        "name": "",
+        "market": "",
+        "industry": "",
+        "list_date": ""
+    }
+
+
+@router.get("/stock/{code}/history")
+async def get_stock_history(
+    code: str,
+    start_date: Optional[str] = Query(None, description="开始日期 YYYY-MM-DD"),
+    end_date: Optional[str] = Query(None, description="结束日期 YYYY-MM-DD"),
+    period: str = Query("daily", description="周期: daily/weekly/monthly")
+):
+    """获取股票历史数据"""
+    # 这里应该从数据库查询历史数据
+    return {
+        "code": code,
+        "data": [],
+        "period": period
+    }
+
+
+@router.get("/sectors")
+async def get_sector_list():
+    """获取板块列表"""
+    # 这里应该从数据库查询板块列表
+    return {
+        "data": [],
+        "total": 0
+    }
+
+
+@router.get("/sector/{name}")
+async def get_sector_info(name: str):
+    """获取板块信息"""
+    # 这里应该从数据库查询板块信息
+    return {
+        "name": name,
+        "stocks": [],
+        "industry_count": 0
+    }
+
+
+@router.get("/market/overview")
+async def get_market_overview():
+    """获取市场概览"""
+    # 这里应该从数据库查询市场概览
+    return {
+        "total_stocks": 0,
+        "total_sectors": 0,
+        "market_status": "closed",
+        "last_update": datetime.now().isoformat()
+    }
+
+
+@router.post("/collect")
+async def start_data_collection(
+    data_type: str = Query(..., description="数据类型: stock/sector/all"),
+    start_date: Optional[str] = Query(None, description="开始日期"),
+    end_date: Optional[str] = Query(None, description="结束日期")
+):
+    """启动数据采集任务"""
+    # 这里应该启动数据采集任务
+    return {
+        "task_id": "task_001",
+        "status": "started",
+        "data_type": data_type,
+        "start_date": start_date,
+        "end_date": end_date
+    }
+
+
+@router.get("/collect/{task_id}")
+async def get_collection_status(task_id: str):
+    """获取数据采集任务状态"""
+    # 这里应该查询任务状态
+    return {
+        "task_id": task_id,
+        "status": "running",
+        "progress": 0,
+        "total": 0,
+        "created_at": datetime.now().isoformat()
+    }
+
+
+@router.get("/quality")
+async def get_data_quality():
+    """获取数据质量报告"""
+    # 这里应该检查数据质量
+    return {
+        "total_records": 0,
+        "missing_data": 0,
+        "error_data": 0,
+        "quality_score": 0.0,
+        "last_check": datetime.now().isoformat()
+    }
+
+
+@router.post("/export")
+async def export_data(
+    data_type: str = Query(..., description="数据类型"),
+    format: str = Query("csv", description="导出格式: csv/json/excel")
+):
+    """导出数据"""
+    # 这里应该导出数据
+    return {
+        "export_id": "export_001",
+        "status": "processing",
+        "format": format,
+        "created_at": datetime.now().isoformat()
+    }

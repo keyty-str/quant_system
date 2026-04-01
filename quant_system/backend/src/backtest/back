@@ -1,0 +1,543 @@
+"""
+回测系统模块
+负责策略的历史回测和性能评估
+"""
+
+import asyncio
+from datetime import datetime, timedelta
+from typing import List, Dict, Optional, Any
+import pandas as pd
+import numpy as np
+from loguru import logger
+
+from src.utils.config import get_settings
+from src.data.storage.mongodb import MongoDB
+from src.data.storage.redis_cache import RedisCache
+from src.data.collectors.data_collector import DataCollector
+from src.strategies.strategy_engine import StrategyEngine
+
+
+class BacktestEngine:
+    """回测引擎"""
+    
+    def __init__(self):
+        self.settings = get_settings()
+        self.mongodb = MongoDB()
+        self.redis = RedisCache()
+        self.data_collector = DataCollector()
+        self.strategy_engine = StrategyEngine()
+    
+    async def run_backtest(
+        self,
+        strategy_name: str,
+        stock_codes: List[str],
+        start_date: str,
+        end_date: str,
+        initial_capital: float = 1000000.0,
+        commission: float = 0.001
+    ) -> Dict:
+        """运行回测"""
+        try:
+            logger.info(f"开始回测策略: {strategy_name}")
+            
+            # 创建回测任务
+            backtest_task = {
+                'strategy_name': strategy_name,
+                'stock_codes': stock_codes,
+                'start_date': start_date,
+                'end_date': end_date,
+                'initial_capital': initial_capital,
+                'commission': commission,
+                'status': 'running',
+                'created_at': datetime.now().isoformat()
+            }
+            
+            # 保存回测任务
+            task_id = await self.mongodb.insert_one('backtest_tasks', backtest_task)
+            backtest_task['task_id'] = str(task_id)
+            
+            # 获取策略配置
+            strategy = await self.strategy_engine.get_strategy(strategy_name)
+            if not strategy:
+                raise Exception(f"策略不存在: {strategy_name}")
+            
+            # 准备回测数据
+            backtest_data = await self._prepare_backtest_data(stock_codes, start_date, end_date)
+            
+            # 执行回测
+            results = await self._execute_backtest(
+                strategy, backtest_data, initial_capital, commission
+            )
+            
+            # 计算性能指标
+            performance = self._calculate_performance_metrics(results)
+            
+            # 保存回测结果
+            backtest_result = {
+                'task_id': backtest_task['task_id'],
+                'strategy_name': strategy_name,
+                'stock_codes': stock_codes,
+                'start_date': start_date,
+                'end_date': end_date,
+                'initial_capital': initial_capital,
+                'final_capital': results['final_capital'],
+                'total_return': performance['total_return'],
+                'annual_return': performance['annual_return'],
+                'max_drawdown': performance['max_drawdown'],
+                'sharpe_ratio': performance['sharpe_ratio'],
+                'win_rate': performance['win_rate'],
+                'profit_loss_ratio': performance['profit_loss_ratio'],
+                'total_trades': len(results['trades']),
+                'equity_curve': results['equity_curve'],
+                'trades': results['trades'],
+                'performance': performance,
+                'created_at': datetime.now().isoformat()
+            }
+            
+            await self.mongodb.insert_one('backtest_results', backtest_result)
+            
+            # 更新任务状态
+            await self.mongodb.update_one(
+                'backtest_tasks',
+                {'task_id': backtest_task['task_id']},
+                {'status': 'completed', 'updated_at': datetime.now().isoformat()}
+            )
+            
+            # 缓存结果
+            await self.redis.set(
+                f"backtest_result:{backtest_task['task_id']}",
+                backtest_result,
+                expire=3600
+            )
+            
+            logger.info(f"回测完成: {strategy_name}")
+            return backtest_result
+            
+        except Exception as e:
+            logger.error(f"回测失败: {e}")
+            return {}
+    
+    async def _prepare_backtest_data(
+        self,
+        stock_codes: List[str],
+        start_date: str,
+        end_date: str
+    ) -> Dict[str, pd.DataFrame]:
+        """准备回测数据"""
+        try:
+            backtest_data = {}
+            
+            for stock_code in stock_codes:
+                # 获取股票历史数据
+                df = await self.data_collector.get_stock_data(stock_code, days=365*2)
+                
+                if not df.empty:
+                    # 转换日期格式
+                    df['date'] = pd.to_datetime(df['date'])
+                    
+                    # 筛选日期范围
+                    mask = (df['date'] >= start_date) & (df['date'] <= end_date)
+                    df_filtered = df.loc[mask]
+                    
+                    if not df_filtered.empty:
+                        backtest_data[stock_code] = df_filtered
+            
+            logger.info(f"准备回测数据完成，共 {len(backtest_data)} 只股票")
+            return backtest_data
+            
+        except Exception as e:
+            logger.error(f"准备回测数据失败: {e}")
+            return {}
+    
+    async def _execute_backtest(
+        self,
+        strategy: Dict,
+        backtest_data: Dict[str, pd.DataFrame],
+        initial_capital: float,
+        commission: float
+    ) -> Dict:
+        """执行回测"""
+        try:
+            # 初始化回测状态
+            capital = initial_capital
+            positions = {}  # 持仓 {stock_code: quantity}
+            trades = []  # 交易记录
+            equity_curve = []  # 权益曲线
+            
+            # 获取所有日期
+            all_dates = set()
+            for df in backtest_data.values():
+                all_dates.update(df['date'].dt.strftime('%Y-%m-%d').tolist())
+            
+            dates = sorted(all_dates)
+            
+            for date in dates:
+                daily_trades = []
+                
+                for stock_code, df in backtest_data.items():
+                    # 获取当日数据
+                    day_data = df[df['date'].dt.strftime('%Y-%m-%d') == date]
+                    
+                    if day_data.empty:
+                        continue
+                    
+                    current_price = day_data.iloc[0]['close']
+                    
+                    # 生成交易信号
+                    signal = await self._generate_backtest_signal(
+                        strategy, df, date, stock_code
+                    )
+                    
+                    if signal:
+                        # 执行交易
+                        trade_result = await self._execute_trade(
+                            signal, stock_code, current_price, capital, positions, commission
+                        )
+                        
+                        if trade_result:
+                            daily_trades.append(trade_result)
+                            capital = trade_result['capital_after']
+                            positions = trade_result['positions_after']
+                
+                # 记录当日权益
+                total_value = capital
+                for stock_code, quantity in positions.items():
+                    if stock_code in backtest_data:
+                        day_data = backtest_data[stock_code][
+                            backtest_data[stock_code]['date'].dt.strftime('%Y-%m-%d') == date
+                        ]
+                        if not day_data.empty:
+                            total_value += quantity * day_data.iloc[0]['close']
+                
+                equity_curve.append({
+                    'date': date,
+                    'equity': total_value,
+                    'capital': capital,
+                    'positions': positions.copy()
+                })
+                
+                trades.extend(daily_trades)
+            
+            # 计算最终资本
+            final_capital = capital
+            for stock_code, quantity in positions.items():
+                if stock_code in backtest_data:
+                    latest_data = backtest_data[stock_code].iloc[-1]
+                    final_capital += quantity * latest_data['close']
+            
+            return {
+                'final_capital': final_capital,
+                'trades': trades,
+                'equity_curve': equity_curve,
+                'positions': positions
+            }
+            
+        except Exception as e:
+            logger.error(f"执行回测失败: {e}")
+            return {}
+    
+    async def _generate_backtest_signal(
+        self,
+        strategy: Dict,
+        df: pd.DataFrame,
+        current_date: str,
+        stock_code: str
+    ) -> Dict:
+        """生成回测信号"""
+        try:
+            # 获取当前日期在数据中的位置
+            df['date_str'] = df['date'].dt.strftime('%Y-%m-%d')
+            current_idx = df[df['date_str'] == current_date].index
+            
+            if len(current_idx) == 0:
+                return {}
+            
+            current_idx = current_idx[0]
+            
+            # 需要足够的历史数据
+            if current_idx < 60:
+                return {}
+            
+            # 获取历史数据窗口
+            window_data = df.iloc[current_idx-60:current_idx+1].copy()
+            
+            # 计算技术指标
+            window_data = self.strategy_engine._calculate_technical_indicators(window_data)
+            
+            # 获取最新数据
+            latest = window_data.iloc[-1]
+            prev = window_data.iloc[-2]
+            
+            # 根据策略类型生成信号
+            strategy_type = strategy.get('type', 'trend')
+            
+            if strategy_type == 'trend':
+                # 趋势策略
+                if (latest['ma5'] > latest['ma20'] and 
+                    prev['ma5'] <= prev['ma20'] and
+                    latest['close'] > latest['ma5']):
+                    return {
+                        'type': 'buy',
+                        'price': latest['close'],
+                        'confidence': 0.8
+                    }
+                elif (latest['ma5'] < latest['ma20'] and 
+                      prev['ma5'] >= prev['ma20'] and
+                      latest['close'] < latest['ma5']):
+                    return {
+                        'type': 'sell',
+                        'price': latest['close'],
+                        'confidence': 0.8
+                    }
+            
+            elif strategy_type == 'mean_reversion':
+                # 均值回归策略
+                if latest['rsi'] < 30 and latest['boll_lower'] < latest['close']:
+                    return {
+                        'type': 'buy',
+                        'price': latest['close'],
+                        'confidence': 0.75
+                    }
+                elif latest['rsi'] > 70 and latest['boll_upper'] > latest['close']:
+                    return {
+                        'type': 'sell',
+                        'price': latest['close'],
+                        'confidence': 0.75
+                    }
+            
+            elif strategy_type == 'momentum':
+                # 动量策略
+                if (latest['momentum'] > 0.05 and 
+                    latest['volume_momentum'] > 0.3 and
+                    latest['close'] > latest['ma20']):
+                    return {
+                        'type': 'buy',
+                        'price': latest['close'],
+                        'confidence': 0.7
+                    }
+                elif (latest['momentum'] < -0.05 and 
+                      latest['volume_momentum'] < -0.2 and
+                      latest['close'] < latest['ma20']):
+                    return {
+                        'type': 'sell',
+                        'price': latest['close'],
+                        'confidence': 0.7
+                    }
+            
+            return {}
+            
+        except Exception as e:
+            logger.error(f"生成回测信号失败: {e}")
+            return {}
+    
+    async def _execute_trade(
+        self,
+        signal: Dict,
+        stock_code: str,
+        current_price: float,
+        capital: float,
+        positions: Dict,
+        commission: float
+    ) -> Dict:
+        """执行交易"""
+        try:
+            signal_type = signal['type']
+            quantity = 0
+            
+            if signal_type == 'buy':
+                # 计算可买入数量（使用10%资金）
+                max_investment = capital * 0.1
+                quantity = int(max_investment / current_price / 100) * 100  # 按手数买入
+                
+                if quantity > 0 and capital >= quantity * current_price * (1 + commission):
+                    # 执行买入
+                    cost = quantity * current_price * (1 + commission)
+                    capital -= cost
+                    positions[stock_code] = positions.get(stock_code, 0) + quantity
+                    
+                    return {
+                        'date': signal.get('date', datetime.now().isoformat()),
+                        'stock_code': stock_code,
+                        'type': 'buy',
+                        'quantity': quantity,
+                        'price': current_price,
+                        'cost': cost,
+                        'capital_after': capital,
+                        'positions_after': positions.copy()
+                    }
+            
+            elif signal_type == 'sell':
+                # 检查是否有持仓
+                if stock_code in positions and positions[stock_code] > 0:
+                    quantity = positions[stock_code]
+                    
+                    # 执行卖出
+                    revenue = quantity * current_price * (1 - commission)
+                    capital += revenue
+                    positions[stock_code] = 0
+                    
+                    return {
+                        'date': signal.get('date', datetime.now().isoformat()),
+                        'stock_code': stock_code,
+                        'type': 'sell',
+                        'quantity': quantity,
+                        'price': current_price,
+                        'revenue': revenue,
+                        'capital_after': capital,
+                        'positions_after': positions.copy()
+                    }
+            
+            return {}
+            
+        except Exception as e:
+            logger.error(f"执行交易失败: {e}")
+            return {}
+    
+    def _calculate_performance_metrics(self, results: Dict) -> Dict:
+        """计算性能指标"""
+        try:
+            equity_curve = results.get('equity_curve', [])
+            trades = results.get('trades', [])
+            
+            if not equity_curve:
+                return {}
+            
+            # 计算收益率序列
+            equity_series = [point['equity'] for point in equity_curve]
+            returns = pd.Series(equity_series).pct_change().dropna()
+            
+            # 总收益率
+            total_return = (equity_series[-1] - equity_series[0]) / equity_series[0]
+            
+            # 年化收益率
+            days = len(equity_curve)
+            annual_return = (1 + total_return) ** (365 / days) - 1
+            
+            # 最大回撤
+            peak = equity_series[0]
+            max_drawdown = 0
+            for value in equity_series:
+                if value > peak:
+                    peak = value
+                drawdown = (peak - value) / peak
+                if drawdown > max_drawdown:
+                    max_drawdown = drawdown
+            
+            # 夏普比率
+            risk_free_rate = 0.03  # 假设无风险利率3%
+            if returns.std() > 0:
+                sharpe_ratio = (returns.mean() - risk_free_rate/252) / returns.std() * np.sqrt(252)
+            else:
+                sharpe_ratio = 0
+            
+            # 计算交易统计
+            winning_trades = []
+            losing_trades = []
+            
+            for trade in trades:
+                if trade['type'] == 'sell':
+                    # 查找对应的买入交易
+                    buy_trades = [t for t in trades if t['type'] == 'buy' and t['stock_code'] == trade['stock_code']]
+                    if buy_trades:
+                        buy_trade = buy_trades[-1]
+                        profit = trade['revenue'] - buy_trade['cost']
+                        if profit > 0:
+                            winning_trades.append(profit)
+                        else:
+                            losing_trades.append(profit)
+            
+            # 胜率
+            total_trades = len(winning_trades) + len(losing_trades)
+            win_rate = len(winning_trades) / total_trades if total_trades > 0 else 0
+            
+            # 盈亏比
+            avg_profit = np.mean(winning_trades) if winning_trades else 0
+            avg_loss = abs(np.mean(losing_trades)) if losing_trades else 0
+            profit_loss_ratio = avg_profit / avg_loss if avg_loss > 0 else 0
+            
+            return {
+                'total_return': round(total_return, 4),
+                'annual_return': round(annual_return, 4),
+                'max_drawdown': round(max_drawdown, 4),
+                'sharpe_ratio': round(sharpe_ratio, 4),
+                'win_rate': round(win_rate, 4),
+                'profit_loss_ratio': round(profit_loss_ratio, 4),
+                'total_trades': total_trades,
+                'winning_trades': len(winning_trades),
+                'losing_trades': len(losing_trades)
+            }
+            
+        except Exception as e:
+            logger.error(f"计算性能指标失败: {e}")
+            return {}
+    
+    async def get_backtest_result(self, task_id: str) -> Dict:
+        """获取回测结果"""
+        try:
+            # 先从Redis缓存获取
+            cached = await self.redis.get(f"backtest_result:{task_id}")
+            if cached:
+                return cached
+            
+            # 从MongoDB获取
+            result = await self.mongodb.find_one('backtest_results', {'task_id': task_id})
+            
+            if result:
+                # 缓存到Redis
+                await self.redis.set(
+                    f"backtest_result:{task_id}",
+                    result,
+                    expire=3600
+                )
+                return result
+            
+            return {}
+            
+        except Exception as e:
+            logger.error(f"获取回测结果失败: {e}")
+            return {}
+    
+    async def get_backtest_history(self, limit: int = 20) -> List[Dict]:
+        """获取回测历史"""
+        try:
+            results = await self.mongodb.find_many(
+                'backtest_results',
+                {},
+                limit=limit,
+                sort=[('created_at', -1)]
+            )
+            return results
+        except Exception as e:
+            logger.error(f"获取回测历史失败: {e}")
+            return []
+    
+    async def compare_backtests(self, task_ids: List[str]) -> Dict:
+        """比较多個回测结果"""
+        try:
+            results = []
+            for task_id in task_ids:
+                result = await self.get_backtest_result(task_id)
+                if result:
+                    results.append(result)
+            
+            if not results:
+                return {}
+            
+            # 比较指标
+            comparison = {
+                'results': results,
+                'best_return': max(results, key=lambda x: x.get('total_return', 0)),
+                'best_sharpe': max(results, key=lambda x: x.get('sharpe_ratio', 0)),
+                'lowest_drawdown': min(results, key=lambda x: x.get('max_drawdown', 0)),
+                'highest_win_rate': max(results, key=lambda x: x.get('win_rate', 0))
+            }
+            
+            return comparison
+            
+        except Exception as e:
+            logger.error(f"比较回测结果失败: {e}")
+            return {}
+
+
+# 创建全局回测引擎实例
+backtest_engine = BacktestEngine()
