@@ -1,0 +1,141 @@
+version: "3.8"
+
+services:
+  # MongoDB数据库
+  mongodb:
+    image: mongo:6.0
+    container_name: quant_mongodb
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER:-admin}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASS:-password123}
+      MONGO_INITDB_DATABASE: ${MONGO_DB:-quant_system}
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+      - ./docker/mongodb/init:/docker-entrypoint-initdb.d
+    networks:
+      - quant_network
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Redis缓存
+  redis:
+    image: redis:7.0-alpine
+    container_name: quant_redis
+    restart: unless-stopped
+    command: redis-server --requirepass ${REDIS_PASS:-password123}
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+      - ./docker/redis/redis.conf:/usr/local/etc/redis/redis.conf
+    networks:
+      - quant_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # 后端API服务
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: quant_backend
+    restart: unless-stopped
+    environment:
+      - MONGO_HOST=mongodb
+      - MONGO_PORT=27017
+      - MONGO_DB=${MONGO_DB:-quant_system}
+      - MONGO_USER=${MONGO_USER:-admin}
+      - MONGO_PASS=${MONGO_PASS:-password123}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASS=${REDIS_PASS:-password123}
+      - API_HOST=0.0.0.0
+      - API_PORT=8000
+      - SECRET_KEY=${SECRET_KEY:-your-secret-key-here}
+      - TUSHARE_TOKEN=${TUSHARE_TOKEN:-}
+      - AKSHARE_ENABLED=${AKSHARE_ENABLED:-true}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+      - ./logs/backend:/app/logs
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - quant_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # 前端服务
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: quant_frontend
+    restart: unless-stopped
+    environment:
+      - API_URL=http://backend:8000
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    depends_on:
+      - backend
+    networks:
+      - quant_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Nginx反向代理
+  nginx:
+    image: nginx:alpine
+    container_name: quant_nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf
+      - ./docker/nginx/conf.d:/etc/nginx/conf.d
+      - ./frontend/build:/usr/share/nginx/html
+      - ./logs/nginx:/var/log/nginx
+    depends_on:
+      - backend
+      - frontend
+    networks:
+      - quant_network
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  mongodb_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  quant_network:
+    driver: bridge
