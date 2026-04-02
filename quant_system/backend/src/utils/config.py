@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     API_HOST: str = Field(default="0.0.0.0", env="API_HOST")
     API_PORT: int = Field(default=8000, env="API_PORT")
     SECRET_KEY: str = Field(default="your-secret-key-here", env="SECRET_KEY")
+    JWT_SECRET_KEY: str = Field(default="jwt-secret-key-change-in-production", env="JWT_SECRET_KEY")
     DEBUG: bool = Field(default=True, env="DEBUG")
     
     # CORS配置

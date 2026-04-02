@@ -2,7 +2,7 @@
 策略管理路由
 """
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Body
 from typing import List, Optional
 from datetime import datetime
 from loguru import logger
@@ -36,10 +36,10 @@ async def get_strategy_detail(strategy_id: str):
 
 @router.post("/create")
 async def create_strategy(
-    name: str = Query(..., description="策略名称"),
-    description: str = Query("", description="策略描述"),
-    strategy_type: str = Query(..., description="策略类型: trend/mean_reversion/arbitrage"),
-    parameters: Optional[dict] = Query(None, description="策略参数")
+    name: str = Body(..., description="策略名称"),
+    description: str = Body("", description="策略描述"),
+    strategy_type: str = Body(..., description="策略类型: trend/mean_reversion/arbitrage"),
+    parameters: Optional[dict] = Body(None, description="策略参数")
 ):
     """创建新策略"""
     # 这里应该创建策略
@@ -57,9 +57,9 @@ async def create_strategy(
 @router.put("/{strategy_id}")
 async def update_strategy(
     strategy_id: str,
-    name: Optional[str] = Query(None, description="策略名称"),
-    description: Optional[str] = Query(None, description="策略描述"),
-    parameters: Optional[dict] = Query(None, description="策略参数")
+    name: Optional[str] = Body(None, description="策略名称"),
+    description: Optional[str] = Body(None, description="策略描述"),
+    parameters: Optional[dict] = Body(None, description="策略参数")
 ):
     """更新策略"""
     # 这里应该更新策略

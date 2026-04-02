@@ -2,6 +2,7 @@
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
 pydantic==2.5.0
+pydantic-settings==2.1.0
 python-multipart==0.0.6
 
 # 数据库
@@ -10,7 +11,7 @@ redis==5.0.1  # Redis驱动
 pymongo==4.6.0  # MongoDB同步驱动（备用）
 
 # 数据源
-akshare==1.14.68  # A股数据源
+akshare==1.18.49  # A股数据源
 tushare==1.4.10  # Tushare数据源
 
 # 数据处理
@@ -19,8 +20,8 @@ numpy==1.26.2
 scipy==1.11.4
 
 # 技术分析
-TA-Lib==0.4.28  # 技术指标库
-ta==0.11.0  # 技术分析库（备用）
+# TA-Lib==0.4.28  # 技术指标库（需要系统安装ta-lib，可选）
+ta==0.11.0  # 技术分析库
 
 # 机器学习（可选）
 scikit-learn==1.3.2
@@ -56,6 +57,8 @@ isort==5.13.2  # import排序
 # 安全
 python-jose[cryptography]==3.3.0  # JWT
 passlib[bcrypt]==1.7.4  # 密码加密
+bcrypt==4.0.1  # bcrypt版本固定，避免兼容性问题
+email-validator==2.1.0  # 邮箱验证（pydantic需要）
 
 # 工具
 python-dateutil==2.8.2

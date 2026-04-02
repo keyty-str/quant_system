@@ -10,7 +10,6 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y \
     build-essential \
     curl \
-    software-properties-common \
     git \
     && rm -rf /var/lib/apt/lists/*
 
@@ -24,18 +23,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
-# 安装TA-Lib（技术分析库）
-RUN apt-get update && apt-get install -y \
-    wget \
-    && wget http://prdownloads.sourceforge.net/ta-lib/ta-lib-0.4.0-src.tar.gz \
-    && tar -xzf ta-lib-0.4.0-src.tar.gz \
-    && cd ta-lib/ \
-    && ./configure --prefix=/usr \
-    && make \
-    && make install \
-    && cd .. \
-    && rm -rf ta-lib* \
-    && rm -rf /var/lib/apt/lists/*
+# 注意：TA-Lib C库安装已移除，使用纯Python的ta库替代（已在requirements.txt中）
 
 # 复制应用代码
 COPY . .

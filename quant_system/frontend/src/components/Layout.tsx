@@ -1,5 +1,12 @@
 import React, { useState } from "react";
-import { Layout as AntLayout, Menu, Button, Avatar, Dropdown } from "antd";
+import {
+  Layout as AntLayout,
+  Menu,
+  Button,
+  Avatar,
+  Dropdown,
+  Typography,
+} from "antd";
 import {
   MenuFoldOutlined,
   MenuUnfoldOutlined,
@@ -14,8 +21,12 @@ import {
   LogoutOutlined,
 } from "@ant-design/icons";
 import { useNavigate, useLocation } from "react-router-dom";
+import useAuthStore from "../store/auth";
+import { logout } from "../services/auth";
+import { message } from "antd";
 
 const { Header, Sider, Content } = AntLayout;
+const { Text } = Typography;
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -25,6 +36,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const [collapsed, setCollapsed] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
+  const { user, clearAuth } = useAuthStore();
 
   const menuItems = [
     {
@@ -81,10 +93,16 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     navigate(key);
   };
 
-  const handleUserMenuClick = ({ key }: { key: string }) => {
+  const handleUserMenuClick = async ({ key }: { key: string }) => {
     if (key === "logout") {
-      // 处理退出登录
-      console.log("退出登录");
+      try {
+        await logout();
+      } catch (error) {
+        // 忽略登出错误，继续清除本地状态
+      }
+      clearAuth();
+      message.success("已退出登录");
+      navigate("/login");
     }
   };
 
@@ -135,7 +153,19 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
               height: 64,
             }}
           />
-          <div style={{ marginRight: 24 }}>
+          <div
+            style={{
+              marginRight: 24,
+              display: "flex",
+              alignItems: "center",
+              gap: 12,
+            }}
+          >
+            {user && (
+              <Text style={{ color: "#666" }}>
+                {user.full_name || user.username}
+              </Text>
+            )}
             <Dropdown
               menu={{
                 items: userMenuItems,
